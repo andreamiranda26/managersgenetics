@@ -1,0 +1,622 @@
+
+
+# Load libraries
+
+library(tidyverse)
+library(broom)
+library(forcats)
+library(ggplot2)
+
+# Set working directory and read the CSV
+setwd("~/Library/CloudStorage/Box-Box/GeneticData")
+df_raw <- read_csv("Surveyresults_04_29_25.csv")
+
+# Remove rows 2 and 1 (rows 1 and 2 of metadata) this was because I only need the header and the data 
+df <- df_raw[-c(1, 2), ]
+
+# Recode outcome variable (Q16 = familiarity)
+df <- df %>%
+  mutate(
+    familiar_bin = case_when(
+      Q16 %in% c("Very familiar", "Somewhat familiar") ~ 1,
+      Q16 %in% c("Neutral/Unsure", "Somewhat unfamiliar", "Very unfamiliar") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    role = fct_lump_min(as.factor(Q1), min = 3),
+    years_in_role = as.factor(Q2),
+    state = fct_lump_min(as.factor(Q3), min = 3),
+    org_type = fct_lump_min(as.factor(Q4), min = 3),
+    education = as.factor(Q5),
+    gender = as.factor(Q7),
+    age_range = as.factor(Q8)
+  ) %>%
+  filter(!is.na(familiar_bin))
+
+# Create a named list of predictor formulas
+predictors <- list(
+  role = familiar_bin ~ role,
+  years = familiar_bin ~ years_in_role,
+  state = familiar_bin ~ state,
+  org = familiar_bin ~ org_type,
+  education = familiar_bin ~ education,
+  gender = familiar_bin ~ gender,
+  age = familiar_bin ~ age_range
+)
+
+# Run GLMs individually and tidy the results
+glm_results <- map_dfr(
+  predictors,
+  ~ tidy(glm(.x, data = df, family = binomial)),
+  .id = "predictor"
+)
+
+# Show only coefficients (drop intercepts)
+glm_results_filtered <- glm_results %>%
+  filter(term != "(Intercept)") %>%
+  select(predictor, term, estimate, std.error, statistic, p.value)
+
+# View results
+print(glm_results_filtered)
+#############################
+
+
+
+### Figure 1. Familiarity ~ (A) Years in role, (B) Org type
+
+library(broom)
+library(dplyr)
+library(ggplot2)
+
+# — Panel A: years_in_role → familiar_binary
+model_years <- glm(familiar_bin ~ years_in_role, data = df, family = binomial)
+
+# Print model summary
+summary(model_years)
+
+# Get odds ratios and 95% confidence intervals
+exp(cbind(OR = coef(model_years), confint(model_years)))
+
+# grid of the five experience bins (must match exactly your factor levels)
+year_grid <- data.frame(
+  years_in_role = factor(
+    c("0-5 years","6-10 years","11-15 years","16-20 years","21+ years"),
+    levels = levels(df$years_in_role),
+    ordered = TRUE
+  )
+)
+
+# get link‐scale fit + se, then back‐transform
+p_years <- predict(model_years, newdata = year_grid, type = "link", se.fit = TRUE)
+year_grid <- year_grid %>%
+  mutate(
+    fit   = p_years$fit,
+    se    = p_years$se.fit,
+    prob  = plogis(fit),
+    lower = plogis(fit - 1.96 * se),
+    upper = plogis(fit + 1.96 * se),
+    panel = "A: Years in role",
+    x     = years_in_role
+  )
+
+# — Panel B: org_type → familiar_binary
+model_org <- glm(familiar_bin ~ org_type, data = df, family = binomial)
+
+# Print model summary
+summary(model_org)
+
+# Get odds ratios and 95% confidence intervals
+exp(cbind(OR = coef(model_org), confint(model_org)))
+
+# make sure you spell your two levels exactly as in Q4
+org_grid <- data.frame(
+  org_type = factor(
+    c("State agency","Federal agency"),
+    levels = levels(df$org_type)
+  )
+)
+
+p_org <- predict(model_org, newdata = org_grid, type = "link", se.fit = TRUE)
+org_grid <- org_grid %>%
+  mutate(
+    fit   = p_org$fit,
+    se    = p_org$se.fit,
+    prob  = plogis(fit),
+    lower = plogis(fit - 1.96 * se),
+    upper = plogis(fit + 1.96 * se),
+    panel = "B: Organization type",
+    x     = org_type
+  )
+
+# (1) After you’ve built `year_grid` and `org_grid`, unify their x columns:
+x_levels <- c(
+  "0-5 years", "6-10 years", "11-15 years", 
+  "16-20 years", "21+ years", 
+  "State agency", "Federal agency"
+)
+
+year_grid <- year_grid %>%
+  mutate(
+    x = as.character(x),                 # flatten to character
+    x = factor(x, levels = x_levels)     # re-factor with full order
+  )
+
+org_grid <- org_grid %>%
+  mutate(
+    x = as.character(x),
+    x = factor(x, levels = x_levels)
+  )
+
+# (2) Bind and plot with 'free' scales:
+plot1_data <- bind_rows(year_grid, org_grid)
+
+ggplot(plot1_data, aes(x = x, y = prob)) +
+  geom_col(fill = "purple", alpha = 0.8) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2) +
+  facet_wrap(~ panel, scales = "free") +    # free x *and* free y
+  labs(
+    x     = NULL,
+    y     = "Probability of familiarity",
+    title = "Does experience or agency predict familiarity with genetic data?"
+  ) +
+  ylim(0, 1) +
+  theme_classic() +
+  theme(
+    # Plot title
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    
+    # Facet labels (A: …   B: …)
+    strip.background = element_blank(),
+    strip.text = element_text(size = 16, face = "bold"),
+    
+    # Axis titles
+    axis.title.y = element_text(size = 14, face = "bold"),
+    
+    # Axis tick labels
+    axis.text.x  = element_text(size = 12, face = "bold", angle = 25, hjust = 1),
+    axis.text.y  = element_text(size = 12, face = "bold"),
+    
+    # Legend text & title (if you have one)
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text  = element_text(size = 12)
+  )
+####################
+
+##Figure 2. Familiarity → Expectations of support (and funding)
+
+library(dplyr)
+library(ggplot2)
+
+# 1) Recode your two binary outcomes in place
+df <- df %>%
+  mutate(
+    support_increase = if_else(Q13 == "Increase", 1L, 0L),
+    funding_increase = if_else(Q14 == "Increase", 1L, 0L)
+  )
+
+# 2) Fit two binomial GLMs
+model_sup  <- glm(support_increase ~ familiar_bin, data = df, family = binomial)
+model_fund <- glm(funding_increase  ~ familiar_bin, data = df, family = binomial)
+
+# Print model summary
+summary(model_sup)
+summary(model_fund)
+
+# Get odds ratios and 95% confidence intervals
+exp(cbind(OR = coef(model_sup), confint(model_sup)))
+exp(cbind(OR = coef(model_fund), confint(model_fund)))
+
+# 3) Create a prediction grid
+pred_grid <- data.frame(familiar_bin = c(0, 1))
+
+# 4) Helper to turn a model + label into a tidy pred tibble
+make_pred_df <- function(model, label) {
+  p <- predict(model, newdata = pred_grid, type = "link", se.fit = TRUE)
+  pred_grid %>%
+    mutate(
+      fit      = p$fit,
+      se       = p$se.fit,
+      prob     = plogis(fit),
+      lower    = plogis(fit - 1.96 * se),
+      upper    = plogis(fit + 1.96 * se),
+      outcome  = label,
+      familiar = factor(
+        familiar_bin,
+        levels = c(0,1),
+        labels = c("Not familiar","Familiar")
+      )
+    )
+}
+
+sup_df  <- make_pred_df(model_sup,  "Organizational support")
+fund_df <- make_pred_df(model_fund, "Financial support")
+
+# 5) Combine and plot
+plot2_data <- bind_rows(sup_df, fund_df)
+
+ggplot(plot2_data, aes(x = familiar, y = prob, fill = outcome)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(
+    aes(ymin = lower, ymax = upper),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Organizational support" = "cornflowerblue",
+      "Financial support"      = "firebrick"
+    )
+  ) +
+  labs(
+    title = "Expectations of support over the next decade",
+    x     = "Familiarity with genetic data",
+    y     = "Predicted probability",
+    fill  = NULL
+  ) +
+  ylim(0,1) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title  = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title  = element_text(size = 14, face = "bold"),
+    axis.text   = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+########################
+
+##Figure 3
+
+# — assume you’ve already loaded your CSV, removed metadata rows, and recoded Q16 → familiar_bin —
+# df is your cleaned survey data with familiar_bin ∈ {0,1}
+
+library(tidyverse)
+df2 <- df %>%
+  mutate(
+    ben_pop   = if_else(Q9_2  == "Highly beneficial", 1L, 0L, missing = NA_integer_),
+    ben_mgmt  = if_else(Q9_1  == "Highly beneficial", 1L, 0L, missing = NA_integer_),
+    trust_dec = if_else(Q10_1 %in% c("Very high", "Somewhat high"), 1L, 0L, missing = NA_integer_),
+    trust_met = if_else(Q10_3 %in% c("Very high", "Somewhat high"), 1L, 0L, missing = NA_integer_)
+  ) %>%
+  filter(
+    !is.na(ben_pop),
+    !is.na(ben_mgmt),
+    !is.na(trust_dec),
+    !is.na(trust_met)
+  )
+
+# Quick check
+table(df2$ben_pop, useNA="ifany")
+table(df2$ben_mgmt, useNA="ifany")
+table(df2$trust_dec, useNA="ifany")
+table(df2$trust_met, useNA="ifany")
+
+# 2. Named vector of those new binary columns
+bin_outcomes <- c(
+  "Understanding population dynamics" = "ben_pop",
+  "Improving management strategies"    = "ben_mgmt",
+  "Trust in suitability for management decisions" = "trust_dec",
+  "Trust in data collection methods"   = "trust_met"
+)
+
+# 3. Function to fit, predict, and build CIs
+get_preds <- function(var, label) {
+  m <- glm(
+    formula = as.formula(paste(var, "~ familiar_bin")),
+    data    = df2,
+    family  = binomial
+  )
+  
+  nd <- tibble(familiar_bin = c(0, 1))
+  pr <- predict(m, newdata = nd, type = "link", se.fit = TRUE)
+  
+  crit      <- qnorm(0.975)
+  fit_link  <- pr$fit
+  se_link   <- pr$se.fit
+  
+  tibble(
+    Panel    = label,
+    familiar = factor(nd$familiar_bin,
+                      levels = c(0,1),
+                      labels = c("Not familiar","Familiar")),
+    prob     = plogis(fit_link),
+    lower.CI = plogis(fit_link - crit * se_link),
+    upper.CI = plogis(fit_link + crit * se_link)
+  )
+}
+
+# 4. Loop to get all four
+emm_manual <- map2_dfr(
+  bin_outcomes,
+  names(bin_outcomes),
+  ~ get_preds(.x, .y)
+)
+
+# 5. Plot
+#Reorder Panel so that
+#    1st = top‑left, 2nd = top‑right, 3rd = bottom‑left, 4th = bottom‑right
+emm_manual <- emm_manual %>%
+  mutate(Panel = factor(
+    Panel,
+    levels = c(
+      "Understanding population dynamics",
+      "Improving management strategies",
+      "Trust in suitability for management decisions",
+      "Trust in data collection methods"
+    )
+  ))
+
+# Plot with your red/blue fills
+ggplot(emm_manual, aes(x = familiar, y = prob, fill = familiar)) +
+  geom_col(width = 0.6) +
+  geom_errorbar(aes(ymin = lower.CI, ymax = upper.CI),
+                width = 0.2) +
+  facet_wrap(~ Panel, ncol = 2) +
+  scale_y_continuous(labels = scales::percent_format(1)) +
+  scale_fill_manual(
+    values = c(
+      "Not familiar" = "firebrick",
+      "Familiar"     = "cornflowerblue"
+    )
+  ) +
+  labs(
+    x     = "Familiarity with genetic data",
+    y     = "Predicted probability",
+    title = "Effect of Familiarity on “High” Responses"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    strip.text      = element_text(face = "bold"),
+    axis.text.x     = element_text(angle = 45, hjust = 1)
+  )
+
+
+# 6. Optional: Get OR, CI, and p-values for Table or Results section
+get_model_stats <- function(var, label) {
+  m <- glm(
+    formula = as.formula(paste(var, "~ familiar_bin")),
+    data    = df2,
+    family  = binomial
+  )
+  or_ci <- exp(cbind(OR = coef(m), confint(m)))
+  pval  <- summary(m)$coefficients[, "Pr(>|z|)"]
+  
+  tibble(
+    Panel    = label,
+    Term     = rownames(or_ci),
+    OR       = or_ci[, "OR"],
+    CI_low   = or_ci[, "2.5 %"],
+    CI_high  = or_ci[, "97.5 %"],
+    p_value  = pval
+  )
+}
+
+# Apply to all binary outcomes
+stats_table <- map2_dfr(
+  bin_outcomes,
+  names(bin_outcomes),
+  ~ get_model_stats(.x, .y)
+)
+
+print(stats_table)
+
+
+
+#########################
+
+##Figure 4. Familiarity → Concern about challenges (horizontal grouped bar)
+
+# make sure these are loaded *after* any package that might mask select()
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# 1) Pivot long
+q10_long <- df %>%
+  dplyr::select(
+    familiar_bin, 
+    dplyr::starts_with("Q10_")
+  ) %>%
+  tidyr::pivot_longer(
+    cols      = dplyr::starts_with("Q10_"),
+    names_to  = "item",
+    values_to = "level"
+  )
+
+# 2) Filter for high concern and compute percentages
+challenge_pct <- q10_long %>%
+  dplyr::filter(level %in% c("Somewhat high", "Very high")) %>%
+  dplyr::group_by(item, familiar_bin) %>%
+  dplyr::summarise(n = n(), .groups = "drop") %>%
+  dplyr::group_by(item) %>%
+  dplyr::mutate(
+    total = sum(n),
+    pct   = 100 * n / total
+  ) %>%
+  dplyr::ungroup()
+
+# 3) Label the challenges
+challenge_pct <- challenge_pct %>%
+  dplyr::mutate(
+    Challenge = dplyr::case_when(
+      item == "Q10_1" ~ "Access to DNA samples",
+      item == "Q10_2" ~ "Analysis complexity",
+      item == "Q10_3" ~ "Data integration",
+      item == "Q10_4" ~ "Team expertise",
+      item == "Q10_5" ~ "Time for analysis",
+      item == "Q10_6" ~ "Applicability to conservation",
+      item == "Q10_7" ~ "Funding availability",
+      item == "Q10_8" ~ "Technology access"
+    ),
+    Familiarity = factor(
+      familiar_bin,
+      levels = c(0,1),
+      labels = c("Not familiar","Familiar")
+    )
+  )
+
+# 4) Plot
+ggplot(challenge_pct, aes(x = pct, y = Challenge, fill = Familiarity)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.6) +
+  scale_fill_manual(
+    values = c("Not familiar" = "firebrick",
+               "Familiar"     = "cornflowerblue")
+  ) +
+  labs(
+    title = "Figure 4. Concern about challenges in applying genetic data",
+    x     = "% respondents reporting high concern",
+    y     = NULL,
+    fill  = "Familiarity"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title   = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.text.y  = element_text(size = 12),
+    axis.text.x  = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.text  = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold")
+  )
+
+
+#######
+
+library(dplyr)
+library(purrr)
+library(broom)
+
+# 1. Recode high concern (1 = "Very high" or "Somewhat high", 0 = all else)
+df <- df %>%
+  mutate(
+    challenge_access        = ifelse(Q10_1 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_complexity    = ifelse(Q10_2 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_integration   = ifelse(Q10_3 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_expertise     = ifelse(Q10_4 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_time          = ifelse(Q10_5 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_applicability = ifelse(Q10_6 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_funding       = ifelse(Q10_7 %in% c("Very high", "Somewhat high"), 1, 0),
+    challenge_technology    = ifelse(Q10_8 %in% c("Very high", "Somewhat high"), 1, 0)
+  ) %>%
+  filter(!is.na(familiar_bin))  # ensure familiarity info is present
+
+# 2. Fit GLMs
+glm_challenges <- list(
+  access        = glm(challenge_access ~ familiar_bin, data = df, family = binomial),
+  complexity    = glm(challenge_complexity ~ familiar_bin, data = df, family = binomial),
+  integration   = glm(challenge_integration ~ familiar_bin, data = df, family = binomial),
+  expertise     = glm(challenge_expertise ~ familiar_bin, data = df, family = binomial),
+  time          = glm(challenge_time ~ familiar_bin, data = df, family = binomial),
+  applicability = glm(challenge_applicability ~ familiar_bin, data = df, family = binomial),
+  funding       = glm(challenge_funding ~ familiar_bin, data = df, family = binomial),
+  technology    = glm(challenge_technology ~ familiar_bin, data = df, family = binomial)
+)
+
+# 3. Extract OR, CI, and p-values
+or_challenges <- map_dfr(glm_challenges, ~ {
+  model <- .x
+  or_data <- exp(cbind(OR = coef(model), confint.default(model)))[2, ]  # row 2 = familiar_bin
+  pval <- summary(model)$coefficients[2, 4]  # 4th column = p-value
+  tibble(
+    OR = or_data["OR"],
+    CI_lower = or_data["2.5 %"],
+    CI_upper = or_data["97.5 %"],
+    p_value = pval
+  )
+}, .id = "Challenge")
+
+# 4. Clean and relabel
+or_challenges$Challenge <- recode(or_challenges$Challenge,
+                                  access        = "Access to DNA samples",
+                                  complexity    = "Analysis complexity",
+                                  integration   = "Data integration",
+                                  expertise     = "Team expertise",
+                                  time          = "Time for analysis",
+                                  applicability = "Applicability to conservation",
+                                  funding       = "Funding availability",
+                                  technology    = "Technology access"
+)
+
+# Optional: reorder by figure appearance
+or_challenges <- or_challenges %>%
+  mutate(Challenge = factor(Challenge, levels = c(
+    "Access to DNA samples",
+    "Analysis complexity",
+    "Data integration",
+    "Team expertise",
+    "Time for analysis",
+    "Applicability to conservation",
+    "Funding availability",
+    "Technology access"
+  ))) %>%
+  arrange(Challenge)
+
+# View result
+print(or_challenges)
+#############
+###To plot!
+
+
+# Make prediction data
+pred_grid <- data.frame(familiar_bin = c(0, 1))  # 0 = not familiar, 1 = familiar
+
+# Helper function to extract predictions from a model
+get_pred_probs <- function(model, label) {
+  p <- predict(model, newdata = pred_grid, type = "link", se.fit = TRUE)
+  
+  pred_grid %>%
+    mutate(
+      fit = p$fit,
+      se = p$se.fit,
+      prob = plogis(fit),
+      lower = plogis(fit - 1.96 * se),
+      upper = plogis(fit + 1.96 * se),
+      Challenge = label,
+      Familiarity = factor(
+        familiar_bin,
+        levels = c(0, 1),
+        labels = c("Not familiar", "Familiar")
+      )
+    )
+}
+
+challenge_models_named <- list(
+  "Access to DNA samples"     = glm_challenges$access,
+  "Analysis complexity"       = glm_challenges$complexity,
+  "Data integration"          = glm_challenges$integration,
+  "Team expertise"            = glm_challenges$expertise,
+  "Time for analysis"         = glm_challenges$time,
+  "Applicability to conservation" = glm_challenges$applicability,
+  "Funding availability"      = glm_challenges$funding,
+  "Technology access"         = glm_challenges$technology
+)
+
+# Get predicted probabilities for all
+pred_probs_df <- map2_dfr(
+  challenge_models_named,
+  names(challenge_models_named),
+  ~ get_pred_probs(.x, .y)
+)
+
+library(ggplot2)
+
+ggplot(pred_probs_df, aes(x = prob, y = Challenge, fill = Familiarity)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.6) +
+  geom_errorbar(
+    aes(xmin = lower, xmax = upper),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  scale_fill_manual(values = c("Not familiar" = "firebrick", "Familiar" = "cornflowerblue")) +
+  labs(
+    title = "Concern about challenges in applying genetic data",
+    x = "Predicted probability of high concern",
+    y = NULL,
+    fill = "Familiarity"
+  ) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 14, face = "bold")
+  )

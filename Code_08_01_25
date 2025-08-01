@@ -1,0 +1,345 @@
+# Load libraries
+
+library(tidyverse)
+library(broom)
+library(forcats)
+library(ggplot2)
+
+# Set working directory and read the CSV
+setwd("~/Library/CloudStorage/Box-Box/GeneticData")
+df_raw <- read_csv("Surveyresults_04_29_25.csv")
+
+# Remove rows 2 and 1 (rows 1 and 2 of metadata) this was because I only need the header and the data 
+df <- df_raw[-c(1, 2), ]
+
+# Recode outcome variable (Q16 = familiarity)
+df <- df %>%
+  mutate(
+    familiar_bin = case_when(
+      Q16 %in% c("Very familiar", "Somewhat familiar") ~ 1,
+      Q16 %in% c("Neutral/Unsure", "Somewhat unfamiliar", "Very unfamiliar") ~ 0,
+      TRUE ~ NA_real_
+    ),
+    role = fct_lump_min(as.factor(Q1), min = 3),
+    years_in_role = as.factor(Q2),
+    state = fct_lump_min(as.factor(Q3), min = 3),
+    org_type = fct_lump_min(as.factor(Q4), min = 3),
+    education = as.factor(Q5),
+    gender = as.factor(Q7),
+    age_range = as.factor(Q8)
+  ) %>%
+  filter(!is.na(familiar_bin))
+
+# Create a named list of predictor formulas
+predictors <- list(
+  role = familiar_bin ~ role,
+  years = familiar_bin ~ years_in_role,
+  state = familiar_bin ~ state,
+  org = familiar_bin ~ org_type,
+  education = familiar_bin ~ education,
+  gender = familiar_bin ~ gender,
+  age = familiar_bin ~ age_range
+)
+
+# Run GLMs individually and tidy the results
+glm_results <- map_dfr(
+  predictors,
+  ~ tidy(glm(.x, data = df, family = binomial)),
+  .id = "predictor"
+)
+
+# Show only coefficients (drop intercepts)
+glm_results_filtered <- glm_results %>%
+  filter(term != "(Intercept)") %>%
+  select(predictor, term, estimate, std.error, statistic, p.value)
+
+# View results
+print(glm_results_filtered)
+
+# Optional: Add odds ratios and CIs for preview
+glm_results_filtered <- glm_results %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    conf.low   = exp(estimate - 1.96 * std.error),
+    conf.high  = exp(estimate + 1.96 * std.error)
+  ) %>%
+  select(predictor, term, odds_ratio, conf.low, conf.high, p.value)
+
+
+#############################
+
+### Figure 1. Log‐odds ratios (with 95% Wald CIs) for predictors of familiarity
+
+library(tidyverse)
+library(broom)
+library(stringr)
+
+# 1) Filter + factor‐level setup
+df2 <- df %>%
+  filter(org_type %in% c("State agency","Federal agency")) %>%
+  mutate(
+    age_range = factor(age_range, levels = c("25-34","35-44","45-54","55-64","65+")),
+    org_type  = factor(org_type,  levels = c("State agency","Federal agency"))
+  )
+
+# 2) Fit models
+mod_age <- glm(familiar_bin ~ age_range, data = df2, family = binomial)
+mod_org <- glm(familiar_bin ~ org_type,  data = df2, family = binomial)
+
+# 3) Tidy each (including intercept) on the OR scale
+age_full <- tidy(
+  mod_age,
+  conf.int     = TRUE,
+  conf.method  = "Wald",
+  exponentiate = TRUE
+) %>%
+  mutate(
+    level = if_else(
+      term == "(Intercept)",
+      levels(df2$age_range)[1],
+      str_remove(term, "age_range")
+    ),
+    panel = "A: Age group"
+  ) %>%
+  select(panel, level, estimate, conf.low, conf.high)
+
+org_full <- tidy(
+  mod_org,
+  conf.int     = TRUE,
+  conf.method  = "Wald",
+  exponentiate = TRUE
+) %>%
+  mutate(
+    level = if_else(
+      term == "(Intercept)",
+      levels(df2$org_type)[1],
+      str_remove(term, "org_type")
+    ),
+    panel = "B: Org type"
+  ) %>%
+  select(panel, level, estimate, conf.low, conf.high)
+
+# 4) Combine and re‐factor
+fig1_df <- bind_rows(age_full, org_full) %>%
+  group_by(panel) %>%
+  mutate(level = factor(level, levels = unique(level))) %>%
+  ungroup()
+
+# 5) Plot with geom_pointrange
+ggplot(fig1_df, aes(x = level, y = estimate)) +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), size = 0.8) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey50") +
+  facet_wrap(~ panel, scales = "free_x", nrow = 1) +
+  scale_y_log10() +
+  labs(
+    title =  "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
+    x     = NULL,
+    y     = "Odds ratio (log scale)"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title   = element_text(face = "bold", hjust = 0.5),
+    strip.text   = element_text(face = "bold", size = 14),
+    axis.text.x  = element_text(angle = 25, hjust = 1, size = 12),
+    axis.title.y = element_text(face = "bold", size = 12)
+  )
+
+ggplot(fig1_df, aes(x = level, y = estimate, ymin = conf.low, ymax = conf.high)) +
+  # replace geom_pointrange() with geom_crossbar():
+  geom_crossbar(
+    width     = 0.6,       # how wide each box is
+    fill      = "cornflowerblue",  # box fill
+    color     = "black",   # box border & mid‐bar
+    linewidth = 0.8,       # border thickness
+    fatten    = 1.5        # mid‐bar thickness multiplier
+  ) +
+  geom_hline(
+    yintercept = 1,
+    linetype    = "dashed",
+    color       = "grey50",
+    linewidth   = 0.5
+  ) +
+  facet_wrap(~ panel, scales = "free_x", nrow = 1) +
+  scale_y_log10() +
+  labs(
+    title =  "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
+    x     = NULL,
+    y     = "Odds ratio (log scale)"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title    = element_text(face = "bold", hjust = 0.5),
+    strip.text    = element_text(face = "bold", size = 14),
+    axis.text.x   = element_text(angle = 0, hjust = 0.5, size = 12, face = "bold"),
+    axis.title.y  = element_text(face = "bold", size = 12)
+  )
+
+
+
+ ################################################################
+
+# ────────────────────────────────────────────────────────────
+# Figure 2: Effect of familiarity on support expectations
+# ────────────────────────────────────────────────────────────
+
+
+# ─── 0) Install patchwork if you haven't ─────────────────────────────────────
+# install.packages("patchwork")
+
+
+# ─── 1) Load libraries ─────────────────────────────────────────────────────
+library(tidyverse)   # ggplot2, dplyr, etc.
+library(broom)       # tidy()
+library(patchwork)   # p2a | p2b
+
+# ─── 2) Recode outcomes & familiarity ───────────────────────────────────────
+df2 <- df %>%
+  mutate(
+    support_increase = if_else(Q13 == "Increase", 1L, 0L),
+    funding_increase = if_else(Q14 == "Increase", 1L, 0L),
+    familiar = factor(
+      familiar_bin,
+      levels = c(0,1),
+      labels = c("Not familiar","Familiar")
+    )
+  )
+
+# ─── 3) Fit the GLMs ────────────────────────────────────────────────────────
+model_sup  <- glm(support_increase ~ familiar, data = df2, family = binomial)
+model_fund <- glm(funding_increase ~ familiar,  data = df2, family = binomial)
+
+# ─── 4) Create prediction grid on the *same* predictor name “familiar” ─────
+pred_grid <- tibble(
+  familiar = factor(
+    c("Not familiar","Familiar"),
+    levels = c("Not familiar","Familiar")
+  )
+)
+
+# ─── 5) Predict link, back-transform to odds + 95% Wald CIs ────────────────
+make_odds_pred_df <- function(model, outcome_label) {
+  p <- predict(model, newdata = pred_grid, type = "link", se.fit = TRUE)
+  pred_grid %>%
+    mutate(
+      OR      = exp(p$fit),
+      CI_low  = exp(p$fit - 1.96 * p$se.fit),
+      CI_high = exp(p$fit + 1.96 * p$se.fit),
+      outcome = outcome_label
+    )
+}
+
+sup_odds  <- make_odds_pred_df(model_sup,  "Organizational support")
+fund_odds <- make_odds_pred_df(model_fund, "Financial support")
+
+print(sup_odds)
+print(fund_odds)
+
+# Organizational support model
+or_sup <- exp(cbind(OR = coef(model_sup), confint(model_sup)))
+print(or_sup)
+# Financial support model
+or_fund <- exp(cbind(OR = coef(model_fund), confint(model_fund)))
+print(or_fund)
+
+
+# ─── 6A) Panel A data: stack both outcomes ─────────────────────────────────
+fig2a_df <- bind_rows(sup_odds, fund_odds) %>%
+  mutate(
+    outcome = factor(outcome,
+                     levels = c("Organizational support","Financial support"))
+  )
+
+# ─── 6B) Panel B data: OR of Familiar vs Not familiar ───────────────────────
+sup_or <- tidy(model_sup,
+               conf.int     = TRUE,
+               conf.method  = "Wald",
+               exponentiate = TRUE) %>%
+  filter(term == "familiarFamiliar") %>%
+  transmute(outcome = "Organizational support",
+            OR      = estimate,
+            CI_low  = conf.low,
+            CI_high = conf.high)
+
+fund_or <- tidy(model_fund,
+                conf.int     = TRUE,
+                conf.method  = "Wald",
+                exponentiate = TRUE) %>%
+  filter(term == "familiarFamiliar") %>%
+  transmute(outcome = "Financial support",
+            OR      = estimate,
+            CI_low  = conf.low,
+            CI_high = conf.high)
+
+fig2b_df <- bind_rows(sup_or, fund_or) %>%
+  mutate(outcome = factor(outcome,
+                          levels = c("Organizational support","Financial support")))
+
+# ─── 7) Define your colors ─────────────────────────────────────────────────
+cols <- c(
+  "Organizational support" = "cornflowerblue",
+  "Financial support"      = "firebrick"
+)
+
+# ─── 8A) Panel A: vertical crossbars of predicted odds ────────────────────
+p2a <- ggplot(fig2a_df,
+              aes(x = familiar, y = OR, ymin = CI_low, ymax = CI_high, fill = outcome)) +
+  geom_crossbar(
+    position  = position_dodge(width = 0.7),
+    width     = 0.6,
+    color     = "black",
+    linewidth = 0.6,
+    fatten    = 1.2
+  ) +
+  geom_hline(yintercept = 1,
+             linetype    = "dashed",
+             color       = "grey50",
+             linewidth   = 0.5) +
+  scale_y_log10() +
+  scale_fill_manual(values = cols) +
+  labs(
+    title = "A: Familiarity → Predicted odds of support",
+    x     = NULL,
+    y     = "Odds (log scale)",
+    fill  = NULL
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title      = element_text(face = "bold", hjust = 0.5),
+    axis.text.x     = element_text(face = "bold", size = 12),
+    axis.title.y    = element_text(face = "bold", size = 12),
+    legend.position = "top"
+  )
+
+# ─── 8B) Panel B: horizontal crossbars of OR(Familiar vs Not) ────────────
+p2b <- ggplot(fig2b_df,
+              aes(x = OR, y = outcome, xmin = CI_low, xmax = CI_high, fill = outcome)) +
+  geom_crossbar(
+    width     = 0.6,
+    color     = "black",
+    linewidth = 0.6,
+    fatten    = 1.2
+  ) +
+  geom_vline(xintercept = 1,
+             linetype    = "dashed",
+             color       = "grey50",
+             linewidth   = 0.5) +
+  scale_x_log10() +
+  scale_fill_manual(values = cols) +
+  labs(
+    title = "B: Odds ratio of Familiar vs Not familiar",
+    x     = "Odds ratio (log scale)",
+    y     = NULL,
+    fill  = NULL
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title      = element_text(face = "bold", hjust = 0.5),
+    axis.text.y     = element_text(face = "bold", size = 12),
+    axis.title.x    = element_text(face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+# ─── 9) Combine panels ─────────────────────────────────────────────────────
+(p2a | p2b) +
+  plot_annotation(title = "Figure 2. Effect of familiarity on support expectations")

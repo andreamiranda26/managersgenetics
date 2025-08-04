@@ -71,39 +71,57 @@ glm_results_filtered <- glm_results %>%
 
 ### Figure 1. Log‐odds ratios (with 95% Wald CIs) for predictors of familiarity
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure 1. Log-odds ratios (±95% Wald CIs) for predictors of familiarity
+# ─────────────────────────────────────────────────────────────────────────────
+
 library(tidyverse)
 library(broom)
 library(stringr)
 
-# 1) Filter + factor‐level setup
+# 1) Filter to two agency types and recode factors
 df2 <- df %>%
   filter(org_type %in% c("State agency","Federal agency")) %>%
   mutate(
-    age_range = factor(age_range, levels = c("25-34","35-44","45-54","55-64","65+")),
-    org_type  = factor(org_type,  levels = c("State agency","Federal agency"))
+    years_role = factor(
+      years_in_role,
+      levels = c("0-5 years","6-10 years","11-15 years","16-20 years","21+ years")
+    ),
+    org_type = factor(org_type, levels = c("State agency","Federal agency"))
   )
 
-# 2) Fit models
-mod_age <- glm(familiar_bin ~ age_range, data = df2, family = binomial)
-mod_org <- glm(familiar_bin ~ org_type,  data = df2, family = binomial)
+# 2) Fit the two GLMs
+mod_years <- glm(familiar_bin ~ years_role, data = df2, family = binomial)
+mod_org   <- glm(familiar_bin ~ org_type,   data = df2, family = binomial)
 
-# 3) Tidy each (including intercept) on the OR scale
-age_full <- tidy(
-  mod_age,
+summary(mod_years)
+summary(mod_org)
+
+# Age and familiarity model
+or_year <- exp(cbind(OR = coef(mod_years), confint(mod_years)))
+print(or_year)
+# Organization model
+or_org <- exp(cbind(OR = coef(mod_org), confint(mod_org)))
+print(or_org)
+
+# 3A) Tidy the years-in-role model on the OR scale
+years_full <- tidy(
+  mod_years,
   conf.int     = TRUE,
   conf.method  = "Wald",
   exponentiate = TRUE
 ) %>%
   mutate(
+    panel = "A: Years in role",
     level = if_else(
       term == "(Intercept)",
-      levels(df2$age_range)[1],
-      str_remove(term, "age_range")
-    ),
-    panel = "A: Age group"
+      levels(df2$years_role)[1],       # reference: "0-5 years"
+      str_remove(term, "years_role")   # drop the prefix to get "6-10 years", etc.
+    )
   ) %>%
   select(panel, level, estimate, conf.low, conf.high)
 
+# 3B) Tidy the org-type model on the OR scale
 org_full <- tidy(
   mod_org,
   conf.int     = TRUE,
@@ -111,48 +129,35 @@ org_full <- tidy(
   exponentiate = TRUE
 ) %>%
   mutate(
+    panel = "B: Org type",
     level = if_else(
       term == "(Intercept)",
-      levels(df2$org_type)[1],
+      levels(df2$org_type)[1],        # reference: "State agency"
       str_remove(term, "org_type")
-    ),
-    panel = "B: Org type"
+    )
   ) %>%
   select(panel, level, estimate, conf.low, conf.high)
 
-# 4) Combine and re‐factor
-fig1_df <- bind_rows(age_full, org_full) %>%
+# 4) Combine and order factor levels within each panel
+fig1_df <- bind_rows(years_full, org_full) %>%
   group_by(panel) %>%
-  mutate(level = factor(level, levels = unique(level))) %>%
+  mutate(
+    level = factor(level, levels = unique(level))
+  ) %>%
   ungroup()
 
-# 5) Plot with geom_pointrange
-ggplot(fig1_df, aes(x = level, y = estimate)) +
-  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), size = 0.8) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "grey50") +
-  facet_wrap(~ panel, scales = "free_x", nrow = 1) +
-  scale_y_log10() +
-  labs(
-    title =  "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
-    x     = NULL,
-    y     = "Odds ratio (log scale)"
-  ) +
-  theme_classic(base_size = 14) +
-  theme(
-    plot.title   = element_text(face = "bold", hjust = 0.5),
-    strip.text   = element_text(face = "bold", size = 14),
-    axis.text.x  = element_text(angle = 25, hjust = 1, size = 12),
-    axis.title.y = element_text(face = "bold", size = 12)
-  )
-
-ggplot(fig1_df, aes(x = level, y = estimate, ymin = conf.low, ymax = conf.high)) +
-  # replace geom_pointrange() with geom_crossbar():
+# 5) Plot with vertical crossbars on a log-10 y-axis
+ggplot(fig1_df,
+       aes(x = level,
+           y = estimate,
+           ymin = conf.low,
+           ymax = conf.high)) +
   geom_crossbar(
-    width     = 0.6,       # how wide each box is
-    fill      = "cornflowerblue",  # box fill
-    color     = "black",   # box border & mid‐bar
-    linewidth = 0.8,       # border thickness
-    fatten    = 1.5        # mid‐bar thickness multiplier
+    width     = 0.6,
+    fill      = "cornflowerblue",
+    color     = "black",
+    linewidth = 0.8,
+    fatten    = 1.5
   ) +
   geom_hline(
     yintercept = 1,
@@ -163,7 +168,7 @@ ggplot(fig1_df, aes(x = level, y = estimate, ymin = conf.low, ymax = conf.high))
   facet_wrap(~ panel, scales = "free_x", nrow = 1) +
   scale_y_log10() +
   labs(
-    title =  "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
+    title = "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
     x     = NULL,
     y     = "Odds ratio (log scale)"
   ) +
@@ -171,7 +176,8 @@ ggplot(fig1_df, aes(x = level, y = estimate, ymin = conf.low, ymax = conf.high))
   theme(
     plot.title    = element_text(face = "bold", hjust = 0.5),
     strip.text    = element_text(face = "bold", size = 14),
-    axis.text.x   = element_text(angle = 0, hjust = 0.5, size = 12, face = "bold"),
+    axis.text.x   = element_text(angle = 0, hjust = 0.5,
+                                 size = 12, face = "bold"),
     axis.title.y  = element_text(face = "bold", size = 12)
   )
 
@@ -209,6 +215,17 @@ df2 <- df %>%
 model_sup  <- glm(support_increase ~ familiar, data = df2, family = binomial)
 model_fund <- glm(funding_increase ~ familiar,  data = df2, family = binomial)
 
+summary(model_sup)
+summary(model_fund)
+# Organizational support model
+summary(model_sup)$coefficients["familiarFamiliar", "Pr(>|z|)"]
+#> 0.0125
+
+# Financial support model
+summary(model_fund)$coefficients["familiarFamiliar", "Pr(>|z|)"]
+#> 0.5669
+
+
 # ─── 4) Create prediction grid on the *same* predictor name “familiar” ─────
 pred_grid <- tibble(
   familiar = factor(
@@ -234,6 +251,8 @@ fund_odds <- make_odds_pred_df(model_fund, "Financial support")
 
 print(sup_odds)
 print(fund_odds)
+
+summary(sup_odds)
 
 # Organizational support model
 or_sup <- exp(cbind(OR = coef(model_sup), confint(model_sup)))
@@ -343,3 +362,209 @@ p2b <- ggplot(fig2b_df,
 # ─── 9) Combine panels ─────────────────────────────────────────────────────
 (p2a | p2b) +
   plot_annotation(title = "Figure 2. Effect of familiarity on support expectations")
+
+
+# Organizational support model
+sum_sup <- summary(model_sup)$coefficients
+p_int_sup  <- sum_sup["(Intercept)","Pr(>|z|)"]
+p_fam_sup  <- sum_sup["familiarFamiliar","Pr(>|z|)"]
+
+# Financial support model
+sum_fund <- summary(model_fund)$coefficients
+p_int_fund <- sum_fund["(Intercept)","Pr(>|z|)"]
+p_fam_fund <- sum_fund["familiarFamiliar","Pr(>|z|)"]
+
+# Print them
+data.frame(
+  term = c("(Intercept)","Familiar effect"),
+  p_org = c(p_int_sup,  p_fam_sup),
+  p_fund= c(p_int_fund, p_fam_fund)
+)
+#            term      p_org     p_fund
+#1     (Intercept) 0.46921045 0.01546563
+#2 Familiar effect 0.01248011 0.56686080
+
+
+###################
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Figure 3. Effect of familiarity on perceived benefits, trust, and concerns
+# ─────────────────────────────────────────────────────────────────────────────
+library(tidyverse)
+library(broom)
+library(purrr)
+library(ggplot2)
+
+# 1) Recode your two benefits (“Highly beneficial” only), two trusts, eight concerns
+df3 <- df %>%
+  mutate(
+    ben_pop  = as.integer(Q9_2  == "Highly beneficial"),
+    ben_mgmt = as.integer(Q9_1  == "Highly beneficial"),
+    trust_dec  = as.integer(Q10_1 %in% c("Very high","Somewhat high")),
+    trust_dat  = as.integer(Q10_3 %in% c("Very high","Somewhat high")),
+    ch_access     = as.integer(Q10_1 %in% c("Very high","Somewhat high")),
+    ch_complexity = as.integer(Q10_2 %in% c("Very high","Somewhat high")),
+    ch_datainteg  = as.integer(Q10_3 %in% c("Very high","Somewhat high")),
+    ch_expertise  = as.integer(Q10_4 %in% c("Very high","Somewhat high")),
+    ch_time       = as.integer(Q10_5 %in% c("Very high","Somewhat high")),
+    ch_applic     = as.integer(Q10_6 %in% c("Very high","Somewhat high")),
+    ch_funding    = as.integer(Q10_7 %in% c("Very high","Somewhat high")),
+    ch_technology = as.integer(Q10_8 %in% c("Very high","Somewhat high"))
+  ) %>%
+  filter(!is.na(familiar_bin))
+
+# 2) Fit one GLM per question
+models3 <- list(
+  "Understanding population dynamics" = glm(ben_pop   ~ familiar_bin, data = df3, family = binomial),
+  "Improving management strategies"   = glm(ben_mgmt  ~ familiar_bin, data = df3, family = binomial),
+  "Trust in management decisions"     = glm(trust_dec ~ familiar_bin, data = df3, family = binomial),
+  "Trust in data-collection methods"  = glm(trust_dat ~ familiar_bin, data = df3, family = binomial),
+  "Access to DNA samples"             = glm(ch_access     ~ familiar_bin, data = df3, family = binomial),
+  "Analysis complexity"               = glm(ch_complexity ~ familiar_bin, data = df3, family = binomial),
+  "Data integration"                  = glm(ch_datainteg  ~ familiar_bin, data = df3, family = binomial),
+  "Team expertise"                    = glm(ch_expertise  ~ familiar_bin, data = df3, family = binomial),
+  "Time for analysis"                 = glm(ch_time       ~ familiar_bin, data = df3, family = binomial),
+  "Applicability to conservation"     = glm(ch_applic     ~ familiar_bin, data = df3, family = binomial),
+  "Funding availability"              = glm(ch_funding    ~ familiar_bin, data = df3, family = binomial),
+  "Technology access"                 = glm(ch_technology ~ familiar_bin, data = df3, family = binomial)
+)
+
+# 3) Extract only the familiar_bin term, exponentiate to OR + Wald CI
+fig3_df <- imap_dfr(models3, ~ {
+  tidy(.x, exponentiate = TRUE, conf.int = TRUE, conf.method = "Wald") %>%
+    filter(term == "familiar_bin") %>%
+    transmute(
+      outcome = .y,
+      OR      = estimate,
+      CI_low  = conf.low,
+      CI_high = conf.high
+    )
+})
+
+# 4) Tag each outcome by type
+fig3_df <- fig3_df %>%
+  mutate(
+    type = case_when(
+      outcome %in% c("Understanding population dynamics","Improving management strategies") ~ "Benefit",
+      outcome %in% c("Trust in management decisions","Trust in data-collection methods") ~ "Trust",
+      TRUE ~ "Concern"
+    ),
+    # and set display order:
+    outcome = factor(outcome, levels = rev(c(
+      "Understanding population dynamics",
+      "Improving management strategies",
+      "Trust in management decisions",
+      "Trust in data-collection methods",
+      "Access to DNA samples",
+      "Analysis complexity",
+      "Data integration",
+      "Team expertise",
+      "Time for analysis",
+      "Applicability to conservation",
+      "Funding availability",
+      "Technology access"
+    ))),
+    type = factor(type, levels = c("Benefit","Trust","Concern"))
+  )
+
+# 5) Plot with custom colours
+ggplot(fig3_df, aes(x = OR, y = outcome, xmin = CI_low, xmax = CI_high, fill = type)) +
+  geom_crossbar(
+    color     = "black",
+    linewidth = 0.7,
+    fatten    = 1.5,
+    width     = 0.6
+  ) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50") +
+  scale_x_log10(
+    breaks = c(0.1,0.3,1,3,10,30),
+    labels = scales::number_format(0.1)
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Benefit" = "cornflowerblue",
+      "Trust"   = "firebrick",
+      "Concern" = "purple"
+    ),
+    guide  = guide_legend(title = NULL)
+  ) +
+  labs(
+    title = "Figure 3. Effect of Familiarity on Perceived Benefits, Trust, and Concerns",
+    x     = "Odds ratio (log scale)",
+    y     = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title   = element_text(face = "bold", hjust = 0.5),
+    axis.text.y  = element_text(face = "bold" , color = "black"),
+    axis.title.x = element_text(face = "bold"),
+    panel.grid   = element_blank(),
+    legend.position = "top"
+  )
+
+
+#------------------------#for OR, CIs and pvalues --------------------------
+library(broom)
+library(purrr)
+library(dplyr)
+
+results3 <- imap_dfr(models3, ~ {
+  tidy(.x,
+       exponentiate = TRUE,      # back‐transform to odds ratio
+       conf.int      = TRUE,     # add conf.low / conf.high
+       conf.method   = "Wald"    # use normal‐theory CIs
+  ) %>%
+    filter(term == "familiar_bin") %>%
+    transmute(
+      outcome = .y,
+      OR      = estimate,
+      CI_low  = conf.low,
+      CI_high = conf.high,
+      p_value = p.value
+    )
+})
+
+print(results3)
+
+# # A tibble: 12 × 5
+# outcome                              OR CI_low CI_high p_value
+
+#   1 Understanding population dynamics 4.09  1.08     17.0   0.0420
+# 2 Improving management strategies   3.30  0.964    12.3   0.0632
+# 3 Trust in management decisions     1.81  0.483     7.76  0.395 
+# 4 Trust in data-collection methods  1.07  0.316     3.73  0.912 
+# 5 Access to DNA samples             1.81  0.483     7.76  0.395 
+# 6 Analysis complexity               0.240 0.0334    1.09  0.0931
+# 7 Data integration                  1.07  0.316     3.73  0.912 
+# 8 Team expertise                    0.361 0.0935    1.25  0.119 
+# 9 Time for analysis                 1.03  0.302     3.46  0.967 
+# 10 Applicability to conservation     0.533 0.151     1.84  0.320 
+# 11 Funding availability              0.613 0.0805    3.26  0.587 
+# 12 Technology access                 0.644 0.167     2.28  0.504 
+
+
+# Make sure df3 is the data frame where ch_complexity and ch_expertise are 0/1, and familiar_bin is 0 = Not familiar, 1 = Familiar.
+
+# 1) Contingency tables
+tab_complex <- table(df3$familiar_bin, df3$ch_complexity)
+tab_expert  <- table(df3$familiar_bin, df3$ch_expertise)
+
+# 2) Fisher’s exact test (recommended if any cell < 5)
+fisher_complex <- fisher.test(tab_complex)
+fisher_expert  <- fisher.test(tab_expert)
+
+# 3) Chi-square test (for larger samples)
+chi2_complex <- chisq.test(tab_complex)
+chi2_expert  <- chisq.test(tab_expert)
+
+# 4) View p‐values
+fisher_complex$p.value
+fisher_expert$p.value
+
+chi2_complex$p.value
+chi2_expert$p.value
+
+# 5) You can also compute the raw proportions
+prop.table(tab_complex, margin = 1)  # rows = familiar_bin
+prop.table(tab_expert,  margin = 1)
+

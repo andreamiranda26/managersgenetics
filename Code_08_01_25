@@ -67,6 +67,24 @@ glm_results_filtered <- glm_results %>%
   select(predictor, term, odds_ratio, conf.low, conf.high, p.value)
 
 
+
+
+
+library(dplyr)
+
+# 1) Just raw counts:
+df2 %>%
+  count(role) %>%
+  arrange(desc(n))
+
+# 2) Counts plus row‐percentages:
+df2 %>%
+  count(role) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  arrange(desc(n))
+
+
+
 #############################
 
 ### Figure 1. Log‐odds ratios (with 95% Wald CIs) for predictors of familiarity
@@ -400,8 +418,10 @@ df3 <- df %>%
   mutate(
     ben_pop  = as.integer(Q9_2  == "Highly beneficial"),
     ben_mgmt = as.integer(Q9_1  == "Highly beneficial"),
-    trust_dec  = as.integer(Q10_1 %in% c("Very high","Somewhat high")),
-    trust_dat  = as.integer(Q10_3 %in% c("Very high","Somewhat high")),
+    ben_econ = as.integer(Q9_3  == "Highly beneficial"),
+    trust_dec  = as.integer(Q11_1 %in% c("Very high","Somewhat high")),
+    trust_inst  = as.integer(Q11_2 %in% c("Very high","Somewhat high")),
+    trust_dat  = as.integer(Q11_3 %in% c("Very high","Somewhat high")),
     ch_access     = as.integer(Q10_1 %in% c("Very high","Somewhat high")),
     ch_complexity = as.integer(Q10_2 %in% c("Very high","Somewhat high")),
     ch_datainteg  = as.integer(Q10_3 %in% c("Very high","Somewhat high")),
@@ -417,7 +437,9 @@ df3 <- df %>%
 models3 <- list(
   "Understanding population dynamics" = glm(ben_pop   ~ familiar_bin, data = df3, family = binomial),
   "Improving management strategies"   = glm(ben_mgmt  ~ familiar_bin, data = df3, family = binomial),
+  "Enhanced conservation outcomes"    = glm(ben_econ  ~ familiar_bin, data = df3, family = binomial),
   "Trust in management decisions"     = glm(trust_dec ~ familiar_bin, data = df3, family = binomial),
+  "Trust in institutional decisions" = glm(trust_inst ~ familiar_bin, data = df3, family = binomial),
   "Trust in data-collection methods"  = glm(trust_dat ~ familiar_bin, data = df3, family = binomial),
   "Access to DNA samples"             = glm(ch_access     ~ familiar_bin, data = df3, family = binomial),
   "Analysis complexity"               = glm(ch_complexity ~ familiar_bin, data = df3, family = binomial),
@@ -445,15 +467,17 @@ fig3_df <- imap_dfr(models3, ~ {
 fig3_df <- fig3_df %>%
   mutate(
     type = case_when(
-      outcome %in% c("Understanding population dynamics","Improving management strategies") ~ "Benefit",
-      outcome %in% c("Trust in management decisions","Trust in data-collection methods") ~ "Trust",
+      outcome %in% c("Understanding population dynamics","Improving management strategies", "Enhanced conservation outcomes") ~ "Benefit",
+      outcome %in% c("Trust in management decisions","Trust in institutional decisions","Trust in data-collection methods") ~ "Trust",
       TRUE ~ "Concern"
     ),
     # and set display order:
     outcome = factor(outcome, levels = rev(c(
       "Understanding population dynamics",
       "Improving management strategies",
+      "Enhanced conservation outcomes",
       "Trust in management decisions",
+      "Trust in institutional decisions",
       "Trust in data-collection methods",
       "Access to DNA samples",
       "Analysis complexity",
@@ -526,21 +550,23 @@ results3 <- imap_dfr(models3, ~ {
 
 print(results3)
 
-# # A tibble: 12 × 5
-# outcome                              OR CI_low CI_high p_value
-
-#   1 Understanding population dynamics 4.09  1.08     17.0   0.0420
-# 2 Improving management strategies   3.30  0.964    12.3   0.0632
-# 3 Trust in management decisions     1.81  0.483     7.76  0.395 
-# 4 Trust in data-collection methods  1.07  0.316     3.73  0.912 
-# 5 Access to DNA samples             1.81  0.483     7.76  0.395 
-# 6 Analysis complexity               0.240 0.0334    1.09  0.0931
-# 7 Data integration                  1.07  0.316     3.73  0.912 
-# 8 Team expertise                    0.361 0.0935    1.25  0.119 
-# 9 Time for analysis                 1.03  0.302     3.46  0.967 
-# 10 Applicability to conservation     0.533 0.151     1.84  0.320 
-# 11 Funding availability              0.613 0.0805    3.26  0.587 
-# 12 Technology access                 0.644 0.167     2.28  0.504 
+# A tibble: 14 × 5
+# outcome                               OR CI_low CI_high p_value
+# <chr>                              <dbl>  <dbl>   <dbl>   <dbl>
+#   1 Understanding population dynamics  4.09  1.08     17.0   0.0420
+# 2 Improving management strategies    3.30  0.964    12.3   0.0632
+# 3 Enhanced conservation outcomes     1.90  0.567     6.69  0.301 
+# 4 Trust in management decisions      7.41  1.74     40.0   0.0103
+# 5 Trust in institutional decisions   3.02  0.882    11.0   0.0834
+# 6 Trust in data-collection methods  14.7   2.18    296.    0.0181
+# 7 Access to DNA samples              1.81  0.483     7.76  0.395 
+# 8 Analysis complexity                0.240 0.0334    1.09  0.0931
+# 9 Data integration                   1.07  0.316     3.73  0.912 
+# 10 Team expertise                     0.361 0.0935    1.25  0.119 
+# 11 Time for analysis                  1.03  0.302     3.46  0.967 
+# 12 Applicability to conservation      0.533 0.151     1.84  0.320 
+# 13 Funding availability               0.613 0.0805    3.26  0.587 
+# 14 Technology access                  0.644 0.167     2.28  0.504 
 
 
 # Make sure df3 is the data frame where ch_complexity and ch_expertise are 0/1, and familiar_bin is 0 = Not familiar, 1 = Familiar.
@@ -567,4 +593,3 @@ chi2_expert$p.value
 # 5) You can also compute the raw proportions
 prop.table(tab_complex, margin = 1)  # rows = familiar_bin
 prop.table(tab_expert,  margin = 1)
-

@@ -574,22 +574,28 @@ print(results3)
 # 1) Contingency tables
 tab_complex <- table(df3$familiar_bin, df3$ch_complexity)
 tab_expert  <- table(df3$familiar_bin, df3$ch_expertise)
+tab_fund <- table(df3$familiar_bin, df3$ch_funding)
 
 # 2) Fisher’s exact test (recommended if any cell < 5)
 fisher_complex <- fisher.test(tab_complex)
 fisher_expert  <- fisher.test(tab_expert)
+fisher_fund  <- fisher.test(tab_fund)
 
 # 3) Chi-square test (for larger samples)
 chi2_complex <- chisq.test(tab_complex)
 chi2_expert  <- chisq.test(tab_expert)
+chi2_fund  <- chisq.test(tab_fund)
 
 # 4) View p‐values
 fisher_complex$p.value
 fisher_expert$p.value
+fisher_fund$p.value
 
 chi2_complex$p.value
 chi2_expert$p.value
+chi2_fund$p.value
 
 # 5) You can also compute the raw proportions
 prop.table(tab_complex, margin = 1)  # rows = familiar_bin
 prop.table(tab_expert,  margin = 1)
+prop.table(tab_fund,  margin = 1)

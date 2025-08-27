@@ -169,10 +169,10 @@ ggplot(fig1_df,
        aes(x = level,
            y = estimate,
            ymin = conf.low,
-           ymax = conf.high)) +
+           ymax = conf.high,
+           fill = panel)) +   # map fill to panel
   geom_crossbar(
     width     = 0.6,
-    fill      = "cornflowerblue",
     color     = "black",
     linewidth = 0.8,
     fatten    = 1.5
@@ -185,6 +185,10 @@ ggplot(fig1_df,
   ) +
   facet_wrap(~ panel, scales = "free_x", nrow = 1) +
   scale_y_log10() +
+  scale_fill_manual(
+    values = c("A: Years in role" = "cornflowerblue",
+               "B: Org type"      = "firebrick")
+  ) +
   labs(
     title = "Figure 1. Odds ratios (±95% CI) for predictors of familiarity",
     x     = NULL,
@@ -196,9 +200,9 @@ ggplot(fig1_df,
     strip.text    = element_text(face = "bold", size = 14),
     axis.text.x   = element_text(angle = 0, hjust = 0.5,
                                  size = 12, face = "bold"),
-    axis.title.y  = element_text(face = "bold", size = 12)
+    axis.title.y  = element_text(face = "bold", size = 12),
+    legend.position = "none"   # hide legend since colors map to panels
   )
-
 
 
  ################################################################
